@@ -1,0 +1,58 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>DLB relay</title>
+</head>
+<body>
+<script>
+// DeadlockBuilder relay page. Loaded by the mod in the game's hidden browser panel (CitadelHTMLPanel), which only
+// opens https pages. The page passes messages between the mod and the companion app on this PC:
+//   mod -> page:       URL fragment  #r=<json {id, state}>   (the fragment is never sent to the web server)
+//   page -> companion: POST http://127.0.0.1:8770/answer    (text/plain body = the json)
+//   companion -> page: json answer
+//   page -> mod:       document.title "DLB2|<id>|<i>/<n>|<chunk>"  (the panel only reports the title, <= 4096 chars)
+// The page holds no data and sends nothing anywhere else.
+(function () {
+  "use strict";
+  var COMPANION = "http://127.0.0.1:8770/answer";
+  var CHUNK = 3500;
+  var DELAY = 15;   // ms between titles
+  var last = "";
+
+  function sendTitles(id, text) {
+    var n = Math.max(1, Math.ceil(text.length / CHUNK));
+    var i = 0;
+    function next() {
+      document.title = "DLB2|" + id + "|" + (i + 1) + "/" + n + "|" + text.slice(i * CHUNK, (i + 1) * CHUNK);
+      i++;
+      if (i < n) setTimeout(next, DELAY);
+    }
+    next();
+  }
+
+  function handle() {
+    var h = location.hash || "";
+    var k = h.indexOf("r=");
+    if (k < 0 || h === last) return;
+    last = h;
+    var req;
+    try { req = JSON.parse(decodeURIComponent(h.slice(k + 2))); } catch (e) { document.title = "DLB2|0|err|bad request"; return; }
+    var t0 = Date.now();
+    fetch(COMPANION, { method: "POST", headers: { "Content-Type": "text/plain" }, body: JSON.stringify(req), targetAddressSpace: "local" })
+      .then(function (r) { return r.text(); })
+      .then(function (txt) {
+        var ans;
+        try { ans = JSON.parse(txt); } catch (e) { ans = { error: "companion answer not json" }; }
+        ans.relay_ms = Date.now() - t0;
+        sendTitles(req.id, JSON.stringify(ans));
+      })
+      .catch(function (e) { sendTitles(req.id, JSON.stringify({ error: "companion not reachable: " + e })); });
+  }
+
+  window.addEventListener("hashchange", handle);
+  handle();
+})();
+</script>
+</body>
+</html>
